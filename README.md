@@ -47,7 +47,7 @@ A mod for GTA V designed for stunting.
 | **N** | Save Second Vehicle |
 | **M** | Save Second Vehicle Position |
 | **T** | Toggle Ghost Recording |
-| **H** | Spawn Vehicle |
+| **J** | Spawn Vehicle |
 | **G** | Toggle Speed Graph |
 | **B** | Toggle Jetpack |
 | **K** | Toggle Unnoticeability |
