@@ -5,7 +5,7 @@ A mod for GTA V designed for stunting.
 ## Features
 
 ### Teleporter
-- Save & Load positions with full vehicle state preservation
+- Save & Load positions with full vehicle repair and wash (no more manual fixes!)
 - **Speed Teleport**: 
     1. Standard teleport without velocity/momentum
     2. Preserve velocity/momentum on load
