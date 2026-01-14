@@ -5,7 +5,7 @@ A mod for GTA V designed for stunting.
 ## Features
 
 ### Teleporter
-- Save & Load positions with full vehicle state preservation
+- Save & Load positions with full vehicle repair and wash (no more manual fixes!)
 - **Speed Teleport**: 
     1. Standard teleport without velocity/momentum
     2. Preserve velocity/momentum on load
@@ -47,7 +47,7 @@ A mod for GTA V designed for stunting.
 | **N** | Save Second Vehicle |
 | **M** | Save Second Vehicle Position |
 | **T** | Toggle Ghost Recording |
-| **H** | Spawn Vehicle |
+| **J** | Spawn Vehicle |
 | **G** | Toggle Speed Graph |
 | **B** | Toggle Jetpack |
 | **K** | Toggle Unnoticeability |
@@ -97,6 +97,7 @@ Feel free to modify features, change keybinds, or add functionality to suit your
 ## TODO
 
 - demonstration video
+- fix linear steering (or remove this is definitely folly)
 
 ## License
 
