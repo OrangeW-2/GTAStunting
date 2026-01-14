@@ -98,6 +98,11 @@ Feel free to modify features, change keybinds, or add functionality to suit your
 
 - demonstration video
 - fix linear steering (or remove this is definitely folly)
+- S key (not backwards, but 'S') saves position (unintended)
+- ghost vehicle runup doesn't use old ghost_recording.csv on game launch (should respawn old vehicle and start it on the path, currently doesn't spawn)
+- add all the GTA:O vehicle customisations
+- respawn on bike can vary between idle angles (perhaps do something like force set angle twice?)
+- either undo changes to taxiboost or fix it, it's a straight VC port atm but not well tested
 
 ## License
 
