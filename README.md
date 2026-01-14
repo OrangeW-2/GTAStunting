@@ -14,6 +14,7 @@ A mod for GTA V designed for stunting.
 
 ### Speed Tracking & Analysis
 <img src="https://media.discordapp.net/attachments/176774410206838784/1459871087180648564/image.png?ex=69682626&is=6966d4a6&hm=706bf1a322d20b3cf1302f0d5a6309825eebc720b153fb28abc122c4886fd906&=&format=webp&quality=lossless&width=1240&height=830" width="500"/>
+
 - 3 modes:
     1. Ghost lines
     2. Real-time speed graph overlay (km/h)
