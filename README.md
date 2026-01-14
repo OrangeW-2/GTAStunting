@@ -97,6 +97,7 @@ Feel free to modify features, change keybinds, or add functionality to suit your
 ## TODO
 
 - demonstration video
+- fix linear steering (or remove this is definitely folly)
 
 ## License
 
