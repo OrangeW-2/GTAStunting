@@ -13,7 +13,7 @@ A mod for GTA V designed for stunting.
 - **Ghost Driver**: Record & replay a second vehicle's path for bump stunts (e.g., driving off a moving vehicle)
 
 ### Speed Tracking & Analysis
-<img src="https://media.discordapp.net/attachments/176774410206838784/1459871087180648564/image.png?ex=69682626&is=6966d4a6&hm=706bf1a322d20b3cf1302f0d5a6309825eebc720b153fb28abc122c4886fd906&=&format=webp&quality=lossless&width=1240&height=830" width="500"/>
+<img src="https://i.imgur.com/fP9z9DG.png" width="500"/>
 
 - 3 modes:
     1. Ghost lines
@@ -65,6 +65,24 @@ A mod for GTA V designed for stunting.
 
 All controls are configurable via `GTAStunting.ini`.
 
+### Controller Modifier Support for Teleports
+There is also controller modifier support for save/load actions. Defaulted to no modifier, but can be configured in the ini.
+Supported modifiers are:
+```
+D-Pad:
+ScriptPadUp (Up)
+ScriptPadDown (Down)
+ScriptPadLeft (Left)
+ScriptPadRight (Right)
+
+Face Buttons:
+VehicleExit (Y / Triangle)
+VehicleDuck (A / Cross)
+VehicleHandbrake (RB / R1)
+VehicleHorn (LS / L3 - Left Stick Click)
+LookBehind (RS / R3 - Right Stick Click)
+```
+
 ## Installation
 
 1. Install [ScriptHookV](http://www.dev-c.com/gtav/scripthookv/)
@@ -80,6 +98,7 @@ Edit `GTAStunting.ini` to customize controls and defaults.
 - **Vehicle Configs**: `scripts/VehicleConfigs/*.xml`
 - **Speed Data Exports**: `scripts/stunt_ghosts_*.csv`
     - Supports user defined .csv files, so can be named anything.
+
 ## Source Code
 
 The source is provided for customization. Built with:
@@ -98,12 +117,9 @@ Feel free to modify features, change keybinds, or add functionality to suit your
 
 - demonstration video
 - fix linear steering (or remove this is definitely folly)
-- S key (not backwards, but 'S') saves position (unintended)
 - ghost vehicle runup doesn't use old ghost_recording.csv on game launch (should respawn old vehicle and start it on the path, currently doesn't spawn)
 - add all the GTA:O vehicle customisations
-- respawn on bike can vary between idle angles (perhaps do something like force set angle twice? bike spawns and then settles, maybe another sig. fig. for angle? perhaps there is some kind of minor angle inheritance from pre-teleport)
 - either undo changes to taxiboost or fix it, it's a straight VC port atm but not well tested
-- action replay check (tabbing out stops action replay, need reminder to press F2 again)
 - cant use arrow keys in director mode menu (NBD but annoying)
 
 ## License
