@@ -168,7 +168,9 @@ namespace GTAStunting
                 // Draw 3D ghost trails if mode includes ghost lines
                 if (CurrentMode == DisplayMode.GhostLinesOnly || CurrentMode == DisplayMode.GhostAndGraph)
                 {
-                    Draw3DTrails(savedAttempts, 10);
+                    // Use high precision (12Hz) for GhostLinesOnly, standard (3Hz) for mixed mode
+                    int stride = (CurrentMode == DisplayMode.GhostLinesOnly) ? 1 : 4;
+                    Draw3DTrails(savedAttempts, stride);
                 }
             }
             catch { }

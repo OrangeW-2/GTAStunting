@@ -23,6 +23,8 @@ namespace GTAStunting
         private static bool ghost_town;
         private static bool invulnerable;
         private static bool unnoticable;
+        private static bool wasRecording = false;
+        private static bool showActionReplayWarning = false;
         private static HashSet<int> boostVehicleHashes;
 
         // Keyboard Controls
@@ -57,6 +59,9 @@ namespace GTAStunting
         // Controller Bindings
         private GTA.Control controllerSave;
         private GTA.Control controllerLoad;
+        private GTA.Control controllerSaveModifier;
+        private GTA.Control controllerLoadModifier;
+        private const GTA.Control ControlNone = (GTA.Control)(-1);
 
         #endregion
 
@@ -101,25 +106,47 @@ namespace GTAStunting
             SteeringManager.Update();
             GhostRecorder.Update();
 
-            // Multi-frame fix for acceleration lockout after teleport with speed
-            if (Teleporter.speedTeleportFixFrames > 0)
+            // Action Replay Check
+            // Native source: https://github.com/scripthookvdotnet/scripthookvdotnet/blob/main/source/scripting_v3/GTA.Native/NativeHashes.cs
+            bool isRecording = Function.Call<bool>((Hash)0x1897CA71995A90B4); // IS_REPLAY_RECORDING
+            
+            if (isRecording)
             {
-                Teleporter.speedTeleportFixFrames--;
-                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, (int)GTA.Control.VehicleAccelerate, true);
-                Function.Call(Hash.SET_CONTROL_VALUE_NEXT_FRAME, 0, (int)GTA.Control.VehicleBrake, 1.0f);
+                showActionReplayWarning = false;
             }
+            else if (wasRecording && !isRecording)
+            {
+                showActionReplayWarning = true;
+            }
+            
+            wasRecording = isRecording;
+
+            if (showActionReplayWarning)
+            {
+                DrawText("~r~Action Replay stopped! Press F2 to restart.", 0.5f, 0.05f, 0.5f, 255, 0, 0);
+            }
+
+            Teleporter.OnTick();
 
             // Controller inputs for save/load (configurable via INI)
-            if (controllerSave != GTA.Control.Sprint && Game.IsControlJustPressed(controllerSave) && !Game.IsKeyPressed(Keys.S))
+            // Only process if using a controller to avoid keyboard conflicts
+            if (Game.LastInputMethod == InputMethod.GamePad)
             {
-                Entity controlledEntity = GetControlledEntity();
-                if (controlledEntity != null)
-                    Teleporter.Save(controlledEntity);
-            }
+                // Save: Modifier + SaveButton (or just SaveButton if modifier is None)
+                bool saveModPressed = (controllerSaveModifier == ControlNone) || Game.IsControlPressed(controllerSaveModifier);
+                if (saveModPressed && Game.IsControlJustPressed(controllerSave))
+                {
+                    Entity controlledEntity = GetControlledEntity();
+                    if (controlledEntity != null)
+                        Teleporter.Save(controlledEntity);
+                }
 
-            if (controllerLoad != GTA.Control.Sprint && Game.IsControlJustPressed(controllerLoad) && !Game.IsKeyPressed(Keys.E))
-            {
-                Teleporter.Load(ped);
+                // Load: Modifier + LoadButton
+                bool loadModPressed = (controllerLoadModifier == ControlNone) || Game.IsControlPressed(controllerLoadModifier);
+                if (loadModPressed && Game.IsControlJustPressed(controllerLoad))
+                {
+                    Teleporter.Load(ped);
+                }
             }
 
             // Keep weather synced when time is frozen
@@ -212,7 +239,12 @@ namespace GTAStunting
 
             // Speed tracking controls
             if (e.KeyCode == key_export_data) { SpeedTracker.ExportToCSV(); return; }
-            if (e.KeyCode == key_clear_attempts) { SpeedTracker.ClearAttempts(); return; }
+            if (e.KeyCode == key_clear_attempts)
+            {
+                GhostRecorder.Clear();
+                Notify("Ghost Recording Cleared");
+                return;
+            }
             if (e.KeyCode == key_show_stats) { SpeedTracker.ShowStats(); return; }
             if (e.KeyCode == key_toggle_graph) { SpeedGraph.Toggle(); return; }
             if (e.KeyCode == key_save_ghost) { SpeedTracker.SaveLastAttempt(); return; }
@@ -294,7 +326,7 @@ namespace GTAStunting
             Enum.TryParse(settings.GetValue("Controls", "Save Second Position", "M"), out key_save_second_position);
 
             // Utilities
-            Enum.TryParse(settings.GetValue("Controls", "Spawn Vehicle", "H"), out key_spawn);
+            Enum.TryParse(settings.GetValue("Controls", "Spawn Vehicle", "J"), out key_spawn);
             Enum.TryParse(settings.GetValue("Controls", "Toggle Jetpack", "B"), out key_jetpack);
             Enum.TryParse(settings.GetValue("Controls", "Toggle Noticable", "K"), out key_noticable);
             Enum.TryParse(settings.GetValue("Controls", "Toggle Vulnerable", "L"), out key_vulnerable);
@@ -324,9 +356,20 @@ namespace GTAStunting
             Enum.TryParse(settings.GetValue("Controls", "Toggle Linear Steering", "F12"), out key_linear_steering);
             Enum.TryParse(settings.GetValue("Controls", "Ghost Record", "T"), out key_ghost_record);
 
-            // Controller bindings (use "Sprint" to disable)
-            Enum.TryParse(settings.GetValue("Controller", "Save", "ScriptPadDown"), out controllerSave);
-            Enum.TryParse(settings.GetValue("Controller", "Load", "VehicleHorn"), out controllerLoad);
+            // Controller bindings
+            // Helper for nullable parsing
+            GTA.Control ParseControl(string section, string key, string defaultName)
+            {
+                 string val = settings.GetValue(section, key, defaultName);
+                 if (val.Equals("None", StringComparison.OrdinalIgnoreCase)) return ControlNone;
+                 if (Enum.TryParse(val, out GTA.Control result)) return result;
+                 return ControlNone;
+            }
+
+            controllerSave = ParseControl("Controller", "Save", "ScriptPadDown");
+            controllerLoad = ParseControl("Controller", "Load", "VehicleHorn");
+            controllerSaveModifier = ParseControl("Controller", "SaveModifier", "None");
+            controllerLoadModifier = ParseControl("Controller", "LoadModifier", "None");
 
             // Default states
             if (settings.GetValue("Defaults", "Frozen Time", false)) ToggleTimeFreeze();
@@ -416,8 +459,11 @@ Ghost Record=T
 
 [Controller]
 ;Teleport save and loading!
+;Use 'None' for NO modifier
 Save=ScriptPadDown
+SaveModifier=None
 Load=VehicleHorn
+LoadModifier=None
 
 [Defaults]
 Frozen Time=True
@@ -450,6 +496,18 @@ Notify=true";
         #endregion
 
         #region Toggle Methods
+
+        private static void DrawText(string text, float x, float y, float scale, int r, int g, int b)
+        {
+            Function.Call(Hash.SET_TEXT_FONT, 4);
+            Function.Call(Hash.SET_TEXT_SCALE, scale, scale);
+            Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, 255);
+            Function.Call(Hash.SET_TEXT_CENTRE, true);
+            Function.Call(Hash.SET_TEXT_OUTLINE);
+            Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+            Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, text);
+            Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, x, y);
+        }
 
         private static void ToggleTimeFreeze()
         {

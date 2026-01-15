@@ -6,26 +6,70 @@ using GTA.Native;
 namespace GTAStunting
 {
     /// <summary>
-    /// Handles saving and loading vehicle/player positions with optional velocity preservation.
-    /// Supports a primary teleport point and a secondary vehicle for stunting setups.
+    /// Handles saving and loading player/vehicle positions with velocity.
     /// </summary>
-    public class Teleporter
+    public static class Teleporter
     {
-        // -- Data Structures --
-        private struct TeleportPoint
+        /// <summary>
+        /// Holds all teleport data for a single saved point.
+        /// </summary>
+        public struct TeleportPoint
         {
             public Vector3 Position;
             public Vector3 Rotation; // Euler
+            public Quaternion Quaternion;
+            public Vector3 RotationVelocity;
             public Vector3 Velocity; // True velocity vector
             public float Speed;
+            public float Roll;
+            public float Pitch;
+            public float SteeringAngle;
             public bool IsSet;
 
             public TeleportPoint(Entity e)
             {
+                if (e == null)
+                {
+                    Position = Vector3.Zero;
+                    Rotation = Vector3.Zero;
+                    Quaternion = Quaternion.Identity;
+                    RotationVelocity = Vector3.Zero;
+                    Velocity = Vector3.Zero;
+                    Speed = 0f;
+                    Roll = 0f;
+                    Pitch = 0f;
+                    SteeringAngle = 0f;
+                    IsSet = false;
+                    return;
+                }
+
                 Position = e.Position;
                 Rotation = e.Rotation;
                 Velocity = e.Velocity;
                 Speed = e.Velocity.Length();
+                SteeringAngle = 0f;
+
+                if (e is Vehicle v)
+                {
+                    SteeringAngle = v.SteeringAngle;
+                }
+                
+                // Capture Kinematics
+                // GET_ENTITY_QUATERNION
+                float x = 0, y = 0, z = 0, w = 0;
+                unsafe
+                {
+                    Function.Call(Hash.GET_ENTITY_QUATERNION, e, &x, &y, &z, &w);
+                }
+                Quaternion = new Quaternion(x, y, z, w);
+                
+                // GET_ENTITY_ROTATION_VELOCITY
+                RotationVelocity = Function.Call<Vector3>(Hash.GET_ENTITY_ROTATION_VELOCITY, e);
+                
+                // GET_ENTITY_ROLL / PITCH
+                Roll = Function.Call<float>((Hash)0x831E0242595560DF, e);
+                Pitch = Function.Call<float>((Hash)0xD45DC2893621E1FE, e);
+
                 IsSet = true;
             }
         }
@@ -34,12 +78,20 @@ namespace GTAStunting
         private static TeleportPoint mainPoint;
 
         private static Vehicle secondVehicle;
-        private static TeleportPoint secondPoint;
+        public static TeleportPoint secondPoint = new TeleportPoint(null);
         private static bool hasSecondVehicle = false;
 
         // -- Fix State --
         public static int speedTeleportFixFrames = 0;
         public static Vehicle speedTeleportVehicle = null;
+        // Multi-frame fixes
+        public static int angleFixFrames = 0;
+        public static Vehicle lastTeleportedVehicle = null;
+        public static Vector3 savedRotationForFix;
+        public static float savedSteeringAngleForFix;
+        public static Vector3 savedPositionForFix;
+        public static Vector3 savedVelocityForFix;
+        public static bool fixIsStatic = true;
 
         // -- Stubs for GTAS compatibility --
         public static int idx = 0;
@@ -47,9 +99,13 @@ namespace GTAStunting
         // ========================================================================
         // 1. Default Save/Load
         // ========================================================================
+        // (Save matches previous edit, skipped)
 
         public static void Save(Entity entity)
         {
+            // Ensure Mission Entity to prevent aggressive culling/physics takeover
+            Function.Call(Hash.SET_ENTITY_AS_MISSION_ENTITY, entity, true, true);
+            
             mainPoint = new TeleportPoint(entity);
             GTAS.Notify("Position Saved!");
         }
@@ -65,6 +121,7 @@ namespace GTAStunting
             TeleportPoint pt = mainPoint;
             pt.Speed = 0;
             pt.Velocity = Vector3.Zero;
+            pt.RotationVelocity = Vector3.Zero;
 
             LoadInternal(ped, pt);
             LoadSecondVehicle();
@@ -151,6 +208,7 @@ namespace GTAStunting
             // Use temp point with 0 speed for second vehicle
             TeleportPoint pt = secondPoint;
             pt.Velocity = Vector3.Zero;
+            pt.RotationVelocity = Vector3.Zero;
             pt.Speed = 0;
 
             TeleportVehicle(secondVehicle, pt);
@@ -206,53 +264,116 @@ namespace GTAStunting
                 ped.Position = pt.Position;
                 ped.Rotation = pt.Rotation;
             }
+
             return result;
         }
 
         private static void TeleportVehicle(Vehicle v, TeleportPoint pt)
         {
-            // 1. Capture Engine State
-            float rpm = v.CurrentRPM;
-            int gear = v.CurrentGear;
-            float clutch = v.Clutch;
-            float turbo = v.Turbo;
-            float steering = v.SteeringAngle;
-            Vector3 rotVel = (pt.Speed == 0) ? Vector3.Zero : Vector3.Zero;
-
-            // 2. Set Position
-            v.Position = pt.Position;
-
-            // 3. Set Rotation
-            v.Rotation = pt.Rotation;
-            #pragma warning disable CS0618 // Type or member is obsolete
-            v.RotationVelocity = rotVel; // Note: Teleporter logic might need review for Local vs World, but keeping assignment consistent with type
-            #pragma warning restore CS0618 // Type or member is obsolete
-
-            // 4. Set Speed / Velocity
-            // Strategy: Use SET_VEHICLE_FORWARD_SPEED to wake up engine/physics preventing lockout.
-            // Then immediately overwrite with specific Velocity vector to ensure correct direction (horizontal).
-            if (pt.Speed > 0)
+            bool isStatic = (pt.Speed == 0);
+            
+            // -- PHASE 1: Stop all motion instantly --
+            Function.Call(Hash.SET_ENTITY_VELOCITY, v, 0f, 0f, 0f);
+            Function.Call((Hash)0x8339643499D1222E, v, 0f, 0f, 0f); // SET_ENTITY_ANGULAR_VELOCITY
+            
+            // Disable collision temporarily for clean placement
+            v.IsCollisionEnabled = false;
+            
+            // For static teleports, freeze to prevent physics interference
+            if (isStatic)
             {
-                Function.Call(Hash.SET_VEHICLE_FORWARD_SPEED, v, pt.Speed); // Wake up
-                v.Velocity = pt.Velocity; // Correct vector
+                v.IsPositionFrozen = true;
+            }
+            
+            // -- PHASE 2: Set Position --
+            v.Position = pt.Position;
+            
+            // -- PHASE 3: Set Rotation (Euler, reliable) --
+            Function.Call(Hash.SET_ENTITY_ROTATION, v, pt.Rotation.X, pt.Rotation.Y, pt.Rotation.Z, 2, true);
+            v.Rotation = pt.Rotation;
+            
+            // -- PHASE 4: Set Velocity --
+            if (!isStatic)
+            {
+                // Wake physics
+                Function.Call(Hash.SET_VEHICLE_FORWARD_SPEED, v, pt.Speed);
+                v.Velocity = pt.Velocity;
+                // SET_ENTITY_ANGULAR_VELOCITY
+                Function.Call((Hash)0x8339643499D1222E, v, pt.RotationVelocity.X, pt.RotationVelocity.Y, pt.RotationVelocity.Z);
             }
             else
             {
                 v.Velocity = Vector3.Zero;
+                Function.Call(Hash.SET_ENTITY_VELOCITY, v, 0f, 0f, 0f);
             }
+            
+            // -- PHASE 5: Re-enable collision --
+            v.IsCollisionEnabled = true;
+            
+            // Multi-frame enforcement setup
+            lastTeleportedVehicle = v;
+            
+            // Store target state for Hard Sync
+            savedRotationForFix = pt.Rotation;
+            savedSteeringAngleForFix = pt.SteeringAngle;
+            savedPositionForFix = pt.Position;
+            savedVelocityForFix = isStatic ? Vector3.Zero : pt.Velocity;
+            
+            fixIsStatic = isStatic;
+            
+            // Use 10 frames for ALL teleports to allow "Hard Sync" to override physics stabilizer
+            angleFixFrames = 10;
+        }
 
-            // 5. Restore Engine (only if moving)
-            if (pt.Speed > 0)
+        public static void OnTick()
+        {
+            // Speed Teleport Fix (Acceleration Lockout)
+            if (speedTeleportFixFrames > 0)
             {
-                v.CurrentRPM = rpm;
-                v.CurrentGear = gear;
-                v.Clutch = clutch;
-                v.Turbo = turbo;
+                speedTeleportFixFrames--;
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, (int)GTA.Control.VehicleAccelerate, true);
+                Function.Call(Hash.SET_CONTROL_VALUE_NEXT_FRAME, 0, (int)GTA.Control.VehicleBrake, 1.0f);
             }
-            v.SteeringAngle = steering;
 
-            // 6. Fix acceleration
-            speedTeleportFixFrames = 10;
+            // Hard Sync Physics Fix
+            if (angleFixFrames > 0)
+            {
+                angleFixFrames--;
+                Vehicle vFix = lastTeleportedVehicle;
+                
+                if (vFix != null && vFix.Exists())
+                {
+                    // "Hard Sync" Enforcement - Override physics engine completely
+                    vFix.Position = savedPositionForFix;
+                    vFix.Rotation = savedRotationForFix;
+                    vFix.SteeringAngle = savedSteeringAngleForFix;
+
+                    if (fixIsStatic)
+                    {
+                        // Static: Keep frozen and kill velocity
+                        vFix.IsPositionFrozen = true;
+                        vFix.Velocity = Vector3.Zero;
+                        vFix.RotationVelocity = Vector3.Zero;
+                        Function.Call(Hash.SET_ENTITY_VELOCITY, vFix, 0f, 0f, 0f);
+                    }
+                    else
+                    {
+                        // Moving: Force exact velocity vector
+                        vFix.Velocity = savedVelocityForFix;
+                        vFix.RotationVelocity = Vector3.Zero; // Kill induced spin
+                    }
+                }
+
+                // Unfreeze on last frame
+                if (angleFixFrames == 0)
+                {
+                    if (fixIsStatic && vFix != null && vFix.Exists())
+                    {
+                        vFix.IsPositionFrozen = false;
+                    }
+                    lastTeleportedVehicle = null;
+                }
+            }
         }
     }
 }

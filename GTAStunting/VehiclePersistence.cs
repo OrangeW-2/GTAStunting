@@ -46,14 +46,19 @@ namespace GTAStunting
                 PlateStyle = (int)veh.Mods.LicensePlateStyle
             };
 
-            // Collect mods
+            // Collect mods - must install mod kit first to read mods correctly
+            veh.Mods.InstallModKit();
             foreach (object obj in Enum.GetValues(typeof(VehicleModType)))
             {
                 VehicleModType modType = (VehicleModType)obj;
-                int index = veh.Mods[modType].Index;
-                if (index > -1)
+                // Only check if this vehicle has this mod slot
+                if (veh.Mods[modType].Count > 0)
                 {
-                    data.Mods.Add(new ModItem { ModType = (int)modType, Index = index });
+                    int index = veh.Mods[modType].Index;
+                    if (index >= 0)
+                    {
+                        data.Mods.Add(new ModItem { ModType = (int)modType, Index = index });
+                    }
                 }
             }
 

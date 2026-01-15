@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using GTA;
 using GTA.Math;
+using GTA.Native;
 
 namespace GTAStunting
 {
@@ -218,7 +219,7 @@ namespace GTAStunting
                     // Header
                     string header = "Time";
                     for (int i = 0; i < SavedAttempts.Count; i++)
-                        header += $",Spd_{i + 1},X_{i + 1},Y_{i + 1},Z_{i + 1}";
+                        header += $",Spd_{i + 1},X_{i + 1},Y_{i + 1},Z_{i + 1},Lean_{i + 1}";
                     writer.WriteLine(header);
 
                     // Data rows
@@ -232,11 +233,11 @@ namespace GTAStunting
                             if (row < SavedAttempts[col].Records.Count)
                             {
                                 SpeedRecord rec = SavedAttempts[col].Records[row];
-                                line += $",{rec.Speed:F2},{rec.Position.X:F2},{rec.Position.Y:F2},{rec.Position.Z:F2}";
+                                line += $",{rec.Speed:F2},{rec.Position.X:F2},{rec.Position.Y:F2},{rec.Position.Z:F2},{rec.LeanState}";
                             }
                             else
                             {
-                                line += ",,,,";
+                                line += ",,,,,";
                             }
                         }
                         writer.WriteLine(line);
@@ -278,7 +279,22 @@ namespace GTAStunting
                 if (lines.Length < 2) return;
 
                 int columnCount = lines[0].Split(',').Length;
-                int ghostCount = (columnCount - 1) / 4;
+                
+                // Determine format
+                int ghostCount = 0;
+                int colsPerGhost = 4; // Default legacy
+                
+                if ((columnCount - 1) % 5 == 0)
+                {
+                    colsPerGhost = 5; // New format with Lean
+                    ghostCount = (columnCount - 1) / 5;
+                }
+                else if ((columnCount - 1) % 4 == 0)
+                {
+                    colsPerGhost = 4; // Legacy
+                    ghostCount = (columnCount - 1) / 4;
+                }
+                
                 if (ghostCount <= 0)
                 {
                     GTAS.Notify("Invalid CSV format");
@@ -298,7 +314,7 @@ namespace GTAStunting
 
                     for (int g = 0; g < ghostCount; g++)
                     {
-                        int baseIdx = 1 + g * 4;
+                        int baseIdx = 1 + g * colsPerGhost;
                         string speedStr = values[baseIdx];
                         if (string.IsNullOrWhiteSpace(speedStr)) continue;
 
@@ -306,9 +322,16 @@ namespace GTAStunting
                         float x = float.Parse(values[baseIdx + 1]);
                         float y = float.Parse(values[baseIdx + 2]);
                         float z = float.Parse(values[baseIdx + 3]);
+                        byte lean = 0;
+                        
+                        if (colsPerGhost >= 5 && baseIdx + 4 < values.Length)
+                        {
+                            byte.TryParse(values[baseIdx + 4], out lean);
+                        }
+                        
                         Vector3 pos = new Vector3(x, y, z);
-
-                        imported[g].Records.Add(new SpeedRecord(time, speed, z, pos));
+                        imported[g].Records.Add(new SpeedRecord(time, speed, z, pos, lean));
+                        
                         if (speed > imported[g].MaxSpeed)
                             imported[g].MaxSpeed = speed;
                     }
@@ -321,6 +344,22 @@ namespace GTAStunting
                     {
                         attempt.Finish();
                         SavedAttempts.Add(attempt);
+                    }
+                }
+
+                if (SavedAttempts.Count > 0 && SavedAttempts[0].Records.Count > 0)
+                {
+                    Vector3 startPos = SavedAttempts[0].Records[0].Position;
+                    Function.Call((Hash)0xFE43368D2AA4F2FC, startPos.X, startPos.Y);
+
+                    Ped player = Game.Player.Character;
+                    if (player.IsInVehicle())
+                    {
+                        player.CurrentVehicle.Position = startPos;
+                    }
+                    else
+                    {
+                        player.Position = startPos;
                     }
                 }
 
