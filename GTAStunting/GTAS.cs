@@ -25,11 +25,16 @@ namespace GTAStunting
         private static bool unnoticable;
         private static bool wasRecording = false;
         private static bool showActionReplayWarning = false;
+        private static bool enableActionReplayWarning = true;
         private static HashSet<int> boostVehicleHashes;
 
         // Keyboard Controls
         private Keys key_save;
+        private GTA.Control control_save;
+        private GTA.Control key_save_modifier;
         private Keys key_load;
+        private GTA.Control control_load;
+        private GTA.Control key_load_modifier;
         private Keys key_save_momentum;
         private Keys key_load_momentum;
         private Keys key_spawn;
@@ -62,6 +67,12 @@ namespace GTAStunting
         private GTA.Control controllerSaveModifier;
         private GTA.Control controllerLoadModifier;
         private const GTA.Control ControlNone = (GTA.Control)(-1);
+
+        // Simplified Input Tracking
+        // We track specific controls of interest by their raw values each frame
+        private HashSet<GTA.Control> currentFrameInputs = new HashSet<GTA.Control>();
+        private HashSet<GTA.Control> previousFrameInputs = new HashSet<GTA.Control>();
+        private const float CONTROL_PRESSED_THRESHOLD = 0.5f;
 
         #endregion
 
@@ -109,7 +120,7 @@ namespace GTAStunting
             // Action Replay Check
             // Native source: https://github.com/scripthookvdotnet/scripthookvdotnet/blob/main/source/scripting_v3/GTA.Native/NativeHashes.cs
             bool isRecording = Function.Call<bool>((Hash)0x1897CA71995A90B4); // IS_REPLAY_RECORDING
-            
+
             if (isRecording)
             {
                 showActionReplayWarning = false;
@@ -118,84 +129,96 @@ namespace GTAStunting
             {
                 showActionReplayWarning = true;
             }
-            
+
             wasRecording = isRecording;
 
-            if (showActionReplayWarning)
+            if (enableActionReplayWarning && showActionReplayWarning)
             {
-                DrawText("~r~Action Replay stopped! Press F2 to restart.", 0.5f, 0.05f, 0.5f, 255, 0, 0);
-            }
+                Teleporter.OnTick();
 
-            Teleporter.OnTick();
-
-            // Controller inputs for save/load (configurable via INI)
-            // Only process if using a controller to avoid keyboard conflicts
-            if (Game.LastInputMethod == InputMethod.GamePad)
-            {
-                // Save: Modifier + SaveButton (or just SaveButton if modifier is None)
-                bool saveModPressed = (controllerSaveModifier == ControlNone) || Game.IsControlPressed(controllerSaveModifier);
-                if (saveModPressed && Game.IsControlJustPressed(controllerSave))
+                // Controller inputs for save/load (configurable via INI)
+                // This handles cases where keys are bound to Game Controls in the [Controls] section
+                if (control_save != ControlNone && IsInputJustActive(control_save) && IsModifierMet(key_save_modifier))
                 {
-                    Entity controlledEntity = GetControlledEntity();
-                    if (controlledEntity != null)
-                        Teleporter.Save(controlledEntity);
+                    Entity entity = GetControlledEntity();
+                    if (entity != null) Teleporter.Save(entity);
                 }
-
-                // Load: Modifier + LoadButton
-                bool loadModPressed = (controllerLoadModifier == ControlNone) || Game.IsControlPressed(controllerLoadModifier);
-                if (loadModPressed && Game.IsControlJustPressed(controllerLoad))
+                if (control_load != ControlNone && IsInputJustActive(control_load) && IsModifierMet(key_load_modifier))
                 {
                     Teleporter.Load(ped);
                 }
-            }
 
-            // Keep weather synced when time is frozen
-            if (time_frozen && World.NextWeather != World.Weather)
-            {
-                World.NextWeather = World.Weather;
-            }
+                // Update our custom input state tracker (runs for both keyb/gamepad for debugging/script logic)
+                UpdateInputState();
 
-            // Ghost town - remove traffic and peds
-            if (ghost_town)
-            {
-                Function.Call(Hash.SET_PARKED_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0);
-                Function.Call(Hash.SET_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0);
-                Function.Call(Hash.SET_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0);
-            }
-
-            // Jetpack movement
-            if (Jetpack.is_active)
-            {
-                Vector3 direction = Vector3.Zero;
-                Entity controlledEntity = GetControlledEntity();
-                if (controlledEntity != null)
+                // Only process actions when using a gamepad to avoid keyboard input triggering controller bindings (Legacy/Controller Section)
+                if (Game.LastInputMethod == InputMethod.GamePad)
                 {
-                    if (Game.IsKeyPressed(key_jetpack_forward)) direction += controlledEntity.ForwardVector;
-                    if (Game.IsKeyPressed(key_jetpack_backward)) direction -= controlledEntity.ForwardVector;
-                    if (Game.IsKeyPressed(key_jetpack_up)) direction += Vector3.WorldUp;
-                    if (Game.IsKeyPressed(key_jetpack_down)) direction += Vector3.WorldDown;
-                    Jetpack.Move(direction);
-                }
-            }
+                    // Save: Modifier + SaveButton Just Pressed
+                    bool saveModMet = (controllerSaveModifier == ControlNone) || IsInputActive(controllerSaveModifier);
+                    if (saveModMet && IsInputJustActive(controllerSave))
+                    {
+                        Entity controlledEntity = GetControlledEntity();
+                        if (controlledEntity != null)
+                            Teleporter.Save(controlledEntity);
+                    }
 
-            // Taxi boost handling
-            Vehicle currentVehicle = ped.CurrentVehicle;
-            if (currentVehicle != null && currentVehicle.Exists() && boostVehicleHashes.Contains(currentVehicle.Model.Hash))
-            {
-                if (TaxiBoost.boosting)
-                    TaxiBoost.HandleWallStick(currentVehicle);
-
-                if (Game.IsControlEnabled(GTA.Control.VehicleHeadlight))
-                    Game.DisableControlThisFrame(GTA.Control.VehicleHeadlight);
-
-                if (!TaxiBoost.boosting && Game.IsControlJustPressed(GTA.Control.VehicleHeadlight))
-                {
-                    TaxiBoost.Boost();
-                    return;
+                    // Load: Modifier + LoadButton Just Pressed
+                    bool loadModMet = (controllerLoadModifier == ControlNone) || IsInputActive(controllerLoadModifier);
+                    if (loadModMet && IsInputJustActive(controllerLoad))
+                    {
+                        Teleporter.Load(ped);
+                    }
                 }
 
-                if (TaxiBoost.boosting && Game.IsControlJustReleased(GTA.Control.VehicleHeadlight))
-                    TaxiBoost.StopBoost();
+                // Keep weather synced when time is frozen
+                if (time_frozen && World.NextWeather != World.Weather)
+                {
+                    World.NextWeather = World.Weather;
+                }
+
+                // Ghost town - remove traffic and peds
+                if (ghost_town)
+                {
+                    Function.Call(Hash.SET_PARKED_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0);
+                    Function.Call(Hash.SET_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0);
+                    Function.Call(Hash.SET_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0);
+                }
+
+                // Jetpack movement
+                if (Jetpack.is_active)
+                {
+                    Vector3 direction = Vector3.Zero;
+                    Entity controlledEntity = GetControlledEntity();
+                    if (controlledEntity != null)
+                    {
+                        if (Game.IsKeyPressed(key_jetpack_forward)) direction += controlledEntity.ForwardVector;
+                        if (Game.IsKeyPressed(key_jetpack_backward)) direction -= controlledEntity.ForwardVector;
+                        if (Game.IsKeyPressed(key_jetpack_up)) direction += Vector3.WorldUp;
+                        if (Game.IsKeyPressed(key_jetpack_down)) direction += Vector3.WorldDown;
+                        Jetpack.Move(direction);
+                    }
+                }
+
+                // Taxi boost handling
+                Vehicle currentVehicle = ped.CurrentVehicle;
+                if (currentVehicle != null && currentVehicle.Exists() && boostVehicleHashes.Contains(currentVehicle.Model.Hash))
+                {
+                    if (TaxiBoost.boosting)
+                        TaxiBoost.HandleWallStick(currentVehicle);
+
+                    if (Game.IsControlEnabled(GTA.Control.VehicleHeadlight))
+                        Game.DisableControlThisFrame(GTA.Control.VehicleHeadlight);
+
+                    if (!TaxiBoost.boosting && Game.IsControlJustPressed(GTA.Control.VehicleHeadlight))
+                    {
+                        TaxiBoost.Boost();
+                        return;
+                    }
+
+                    if (TaxiBoost.boosting && Game.IsControlJustReleased(GTA.Control.VehicleHeadlight))
+                        TaxiBoost.StopBoost();
+                }
             }
         }
 
@@ -211,13 +234,13 @@ namespace GTAStunting
             if (ped == null || !ped.Exists()) return;
 
             // Teleporter controls
-            if (e.KeyCode == key_save)
+            if (key_save != Keys.None && e.KeyCode == key_save && IsModifierMet(key_save_modifier))
             {
                 Entity entity = GetControlledEntity();
                 if (entity != null) Teleporter.Save(entity);
                 return;
             }
-            if (e.KeyCode == key_load) { Teleporter.Load(ped); return; }
+            if (key_load != Keys.None && e.KeyCode == key_load && IsModifierMet(key_load_modifier)) { Teleporter.Load(ped); return; }
             if (e.KeyCode == key_save_momentum)
             {
                 Entity entity = GetControlledEntity();
@@ -317,9 +340,11 @@ namespace GTAStunting
 
         private void LoadSettings(ScriptSettings settings)
         {
-            // Position save/load
-            Enum.TryParse(settings.GetValue("Controls", "Save Position", "Y"), out key_save);
-            Enum.TryParse(settings.GetValue("Controls", "Load Position", "E"), out key_load);
+            // Position save/load (Hybrid Parsing)
+            ParseHybrid(settings, "Controls", "Save Position", "Y", out key_save, out control_save);
+            // key_save_modifier parsed late via ParseControl
+            ParseHybrid(settings, "Controls", "Load Position", "E", out key_load, out control_load);
+            // key_load_modifier parsed later via ParseControl
             Enum.TryParse(settings.GetValue("Controls", "Save with Speed", "OemCloseBrackets"), out key_save_momentum);
             Enum.TryParse(settings.GetValue("Controls", "Load with Speed", "OemOpenBrackets"), out key_load_momentum);
             Enum.TryParse(settings.GetValue("Controls", "Save Second Vehicle", "N"), out key_save_second_vehicle);
@@ -371,6 +396,36 @@ namespace GTAStunting
             controllerSaveModifier = ParseControl("Controller", "SaveModifier", "None");
             controllerLoadModifier = ParseControl("Controller", "LoadModifier", "None");
 
+            // Keyboard Modifiers (now Game Controls)
+            key_save_modifier = ParseControl("Controls", "Save Position Modifier", "None");
+            key_load_modifier = ParseControl("Controls", "Load Position Modifier", "None");
+
+            // Helper for Hybrid Parsing
+            void ParseHybrid(ScriptSettings s, string section, string key, string defaultVal, out Keys outKey, out GTA.Control outControl)
+            {
+                string val = s.GetValue(section, key, defaultVal);
+                outKey = Keys.None;
+                outControl = ControlNone;
+
+                // Try Key First
+                if (Enum.TryParse(val, true, out Keys k) && k != Keys.None)
+                {
+                    outKey = k;
+                    return;
+                }
+                
+                // Try Control Second
+                if (Enum.TryParse(val, true, out GTA.Control c))
+                {
+                    outControl = c;
+                    return;
+                }
+                
+                // Fallback to default if everything failed
+                if (Enum.TryParse(defaultVal, true, out Keys defK)) outKey = defK;
+                else if (Enum.TryParse(defaultVal, true, out GTA.Control defC)) outControl = defC;
+            }
+
             // Default states
             if (settings.GetValue("Defaults", "Frozen Time", false)) ToggleTimeFreeze();
             if (settings.GetValue("Defaults", "Ghost Town", false)) ToggleGhostTown();
@@ -385,6 +440,7 @@ namespace GTAStunting
 
             Jetpack.LoadSettings(settings);
             should_notify = settings.GetValue("UI", "Notify", true);
+            enableActionReplayWarning = settings.GetValue("UI", "ActionReplayWarning", true);
         }
 
         #endregion
@@ -423,6 +479,64 @@ namespace GTAStunting
             return ped;
         }
 
+        /// <summary>
+        /// Updates the state of all monitored inputs. 
+        /// Should be called once per frame in OnTick.
+        /// </summary>
+        private void UpdateInputState()
+        {
+            // Swap sets to reuse memory
+            var temp = previousFrameInputs;
+            previousFrameInputs = currentFrameInputs;
+            currentFrameInputs = temp;
+            
+            // Clear new current set
+            currentFrameInputs.Clear();
+            
+            // List of controls we care about checking this frame
+            CheckAndTrackInput(controllerSave);
+            CheckAndTrackInput(controllerLoad);
+            CheckAndTrackInput(controllerSaveModifier);
+            CheckAndTrackInput(controllerLoadModifier);
+            CheckAndTrackInput(key_save_modifier);
+            CheckAndTrackInput(key_load_modifier);
+            CheckAndTrackInput(control_save);
+            CheckAndTrackInput(control_load);
+        }
+
+        private void CheckAndTrackInput(GTA.Control control)
+        {
+            if (control == ControlNone) return;
+            
+            // Use raw value to bypass GTA's blocked input issues
+            if (Game.GetDisabledControlValueNormalized(control) >= CONTROL_PRESSED_THRESHOLD)
+            {
+                currentFrameInputs.Add(control);
+            }
+        }
+
+        /// <summary>
+        /// Returns true if the control is currently held down this frame.
+        /// </summary>
+        private bool IsInputActive(GTA.Control control)
+        {
+            return currentFrameInputs.Contains(control);
+        }
+
+        /// <summary>
+        /// Returns true if the control transitioned from UP to DOWN this frame.
+        /// </summary>
+        private bool IsInputJustActive(GTA.Control control)
+        {
+            return currentFrameInputs.Contains(control) && !previousFrameInputs.Contains(control);
+        }
+
+        private bool IsModifierMet(GTA.Control modifier)
+        {
+            if (modifier == ControlNone) return true;
+            return Game.GetDisabledControlValueNormalized(modifier) >= CONTROL_PRESSED_THRESHOLD;
+        }
+
         private void EnsureSettings()
         {
             string path = Path.ChangeExtension(Filename, ".ini");
@@ -430,7 +544,9 @@ namespace GTAStunting
 
             string defaults = @"[Controls]
 Save Position=Y
+Save Position Modifier=None
 Load Position=E
+Load Position Modifier=None
 Save with Speed=OemCloseBrackets
 Load with Speed=OemOpenBrackets
 Save Second Vehicle=N
@@ -480,7 +596,8 @@ Speed Min=0
 Speed Max=5000
 
 [UI]
-Notify=true";
+Notify=true
+ActionReplayWarning=true";
 
             try
             {
